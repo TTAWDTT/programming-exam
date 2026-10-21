@@ -1,6 +1,6 @@
 # Library borrowing design
 
-Status: reviewed and approved by the student on 2026-10-21. The starter source has not been implemented.
+Status: reviewed and approved by the student on 2026-10-21. Part 1 is implemented. Verification results are recorded in verification.md.
 
 ## Public API
 
@@ -64,9 +64,9 @@ LibraryException extends RuntimeException. Use concrete subclasses for business 
 | Exception | Thrown when | Rule |
 |---|---|---|
 | IllegalArgumentException | Invalid input, unknown referenced ID, duplicate registration, invalid date or stock overflow | R2-R5, R7, R10, R13 |
-| LibraryException | Base for the specific borrowing exceptions below | R6, R8, R9, R12 |
+| LibraryException | Base for the specific borrowing exceptions below | R5, R6, R8, R9, R12 |
 | DuplicateLoanException | Same member already holds the ISBN | R8 |
-| BorrowLimitException | Count is at or above current limit | R6 |
+| BorrowLimitException | Borrow at or above the current limit, or update with a count above the new limit | R5, R6 |
 | NoCopyAvailableException | Available copies are 0 | R9 |
 | LoanNotFoundException | Return has no matching active loan | R12 |
 | IllegalStateException | Injected policy returns negative cents | R16 |
@@ -90,7 +90,7 @@ Copy maps before mutation. Immutable Member, LoanKey and Loan values can be shar
 
 For borrow, normalize and validate inputs and references, then calculate the candidate due date. Check duplicates, the current limit and availability in that order. Add an immutable Loan with the original period and due date to a candidate state, then commit it.
 
-For updateMember, find the existing normalized ID. If the type is unchanged, return without saving. Otherwise replace the member in a candidate state without changing loans. Do not reject a downgrade because of an existing count above the new limit.
+For updateMember, find the existing normalized ID. If the type is unchanged, return without saving. Otherwise compare the active loan count with the replacement member's borrowingLimit. If the count is greater, throw BorrowLimitException before constructing or saving candidate state. Equality is allowed. Replace the member in a candidate state without changing loans or their original due dates.
 
 For returnBook, validate input and references, find the loan and check the return date. Use the stored due date with ChronoUnit.DAYS to calculate nonnegative overdue days. Call FinePolicy and reject negative output. Remove the loan from a candidate state, commit it, then return the fine.
 
@@ -111,7 +111,7 @@ Approved format: versioned UTF-8 Java properties, read and written with Reader a
 
 Indices start at 0. Counts are nonnegative. Stored IDs must already be canonical. Totals are positive int values. Loan references must exist and loan keys must be unique. Loans per ISBN cannot exceed total copies. Dates use ISO text; the original period is 14 or 28, and dueOn equals borrowedOn plus that period.
 
-Do not compare the original period with the current type or reject members above the current limit. Both can result from valid type updates.
+Reject any member whose active loan count exceeds the current borrowingLimit. Do not compare the original period with the current type: a valid update preserves the terms set at borrowing. A postgraduate who changes to undergraduate status at 5 loans keeps the existing 28-day due dates. New loans use 14 days.
 
 Reject missing or unexpected fields, duplicate property keys, duplicate logical records, unknown types, unsupported versions and malformed values. Standard Properties loading overwrites duplicate keys, so detect repeated keys explicitly. Check declared record counts against actual records before constructing state.
 
@@ -141,24 +141,24 @@ This design provides consistency for the stated model; it does not promise datab
 
 Use JUnit 5, fixed LocalDate values and exact cents, counts and exception types. Map tests to R numbers or AC rows.
 
-LibraryTest covers identifiers, registration, updates, both borrowing limits, stock, check priority, returns and failed-operation state. FinePolicyTest covers overdue days 0, 1, 19, 20, 21 and 2147483648, plus replacement policies. FileLibraryTest uses @TempDir for creation, loading, round trips, invalid files and automatic saving.
+LibraryTest covers identifiers, registration, updates, both borrowing limits, stock, check priority, returns and failed-operation state. FinePolicyTest covers default-policy boundaries, including overdue days 0, 1, 19, 20, 21 and 2147483648. LibraryTest.customPolicyIsUsed and FileLibraryTest.customPolicyIsExplicitOnReload cover replacement policies. FileLibraryTest uses @TempDir for creation, loading, round trips, invalid files and automatic saving.
 
-Provide a package-private SnapshotStore injection point for deterministic save-failure tests. Also test the real file writer with a failure injected immediately before atomic publication. Do not rely only on permissions, which may behave differently under elevated privileges. After failure, assert the previous file bytes and relevant member, stock and loan state.
+The implementation provides a package-private SnapshotStore injection point for deterministic save-failure tests. Also test the real file writer with a failure injected immediately before atomic publication. Do not rely only on permissions, which may behave differently under elevated privileges. After failure, assert the previous file bytes and relevant member, stock and loan state.
 
 ## Examination requirements check
 
 | Requirement | Coverage | Current status |
 |---|---|---|
-| Fixed constructor and five methods | Public API preserves all signatures | Planned; source unchanged |
-| Abstract Member and two ID constructors | Classes and member design | Planned |
-| Member differences in subclasses | Limit and period accessors | Planned |
-| FinePolicy and implementation | FinePolicy and CappedDailyFinePolicy | Planned |
-| LibraryException with at least two subclasses | Four borrowing exceptions | Planned |
+| Fixed constructor and five methods | Public API preserves all signatures | Implemented; API test passed |
+| Abstract Member and two ID constructors | Classes and member design | Implemented and tested |
+| Member differences in subclasses | Limit and period accessors | Implemented and tested |
+| FinePolicy and implementation | FinePolicy and CappedDailyFinePolicy | Implemented and tested |
+| LibraryException with at least two subclasses | Four borrowing exceptions | Implemented and tested |
 | Generic collections and reasons | Collections section | Documented |
 | Numbered rules, assumptions and concrete boundaries | spec.md R1-R24, AC01-AC53 | Reviewed and approved |
 | Tasks with files and checks | tasks.md | Reviewed and approved |
-| Actual AI requests and decisions | decisions.md | Reviewed and confirmed by the student |
-| Java 17, JUnit 5, no added dependencies | Existing pom.xml and JDK-only design | Configuration inspected |
-| spec before impl before review | tasks.md | Not yet performed |
+| Actual AI requests and decisions | decisions.md | Specification decisions approved; student confirmed the Chinese explanation of key test expectations and the latest decision record |
+| Java 17, JUnit 5, no added dependencies | Existing pom.xml and JDK-only design | Java 17 clean build and all 100 tests passed |
+| spec before impl before review | tasks.md | spec committed before implementation; Part 2 review remains pending |
 
-Implementation, executed tests and actual persistence guarantees remain to be verified. This documentation does not claim that planned behavior already works.
+A clean build executed 100 JUnit test cases on Amazon Corretto 17.0.20.1 with no failures, errors or skips. File tests exercise round trips, invalid snapshots and injected save failures. The tests verify the stated single-writer operating model; they do not establish power-loss durability. See verification.md for the examination checklist and acceptance-to-test mapping.

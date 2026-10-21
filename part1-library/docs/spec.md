@@ -1,6 +1,6 @@
 # Library borrowing specification
 
-Status: reviewed and approved by the student on 2026-10-21, including the technical decisions. Implementation has not started.
+Status: reviewed and approved by the student on 2026-10-21, including the technical decisions. Part 1 has been implemented and verified; see verification.md for the checks and their limits.
 
 ## Goal
 
@@ -22,8 +22,8 @@ Use Java 17 and JUnit 5 with no other dependencies. Preserve the examination's p
 - R2: Normalize every member ID and ISBN by removing outer whitespace and converting to uppercase using Locale.ROOT. Preserve internal whitespace. IDs are opaque strings; ISBN checksum validation is not required.
 - R3: Null required arguments, empty normalized IDs, unknown referenced members and books, and copies outside 1 through 2147483647 cause IllegalArgumentException. Registration may introduce new IDs; queries, borrowing, returning and updating require the relevant existing records.
 - R4: addMember registers a member with 0 active loans. Reject any already registered normalized ID with IllegalArgumentException, including the same member type.
-- R5: updateMember changes the type of an existing normalized member ID and preserves every loan and due date. An unknown ID causes IllegalArgumentException. Updating to the same type succeeds without changing state.
-- R6: A new borrow requires an active count below the member's current limit; otherwise throw BorrowLimitException. A downgrade may leave the count above the new limit. Existing loans remain valid; new borrowing must wait until the count is below the limit.
+- R5: updateMember changes the type of an existing normalized member ID only if the active loan count does not exceed the new type's limit. Otherwise throw BorrowLimitException without changing the member, loans, inventory or file. A count equal to the new limit is allowed. Successful updates preserve every loan and its original due date. An unknown ID causes IllegalArgumentException. Updating to the same type succeeds without changing state.
+- R6: A member's active loan count must never exceed the current type's limit. A new borrow requires a count below that limit; otherwise throw BorrowLimitException. After an update at exactly the new limit, new borrowing must wait until at least 1 loan is returned.
 - R7: addBook adds copies to the total, including an already registered ISBN. Preserve active loans. If the resulting total would exceed 2147483647, throw IllegalArgumentException without changing the total.
 - R8: Each member may have at most 1 active loan for an ISBN. Repeating it causes DuplicateLoanException. Borrowing it again after return is allowed; different members may borrow different copies.
 - R9: Available copies equal total copies minus active loans for that ISBN. A successful borrow consumes 1 copy; a successful return releases 1. With 0 available copies, borrow causes NoCopyAvailableException. borrowedCount returns the member's active loan count.
@@ -38,7 +38,7 @@ Use Java 17 and JUnit 5 with no other dependencies. Preserve the examination's p
 - R18: new Library() creates an empty independent in-memory instance with the default policy and performs no file I/O. File-backed instances require a caller-supplied path.
 - R19: create(path) requires a nonexistent target and an existing parent directory. It saves a valid empty snapshot before returning. It never overwrites an existing target. Failure produces LibraryStorageException and no usable instance; any pre-existing file is unchanged.
 - R20: load(path) reads an existing file without rewriting it. Missing, unreadable, unsupported or invalid files cause LibraryStorageException identifying the operation, path and cause. Never substitute empty or partially loaded data; preserve the original file.
-- R21: Save normalized member IDs and types, ISBNs and total copies, and each loan's member ID, ISBN, borrow date, due date and original period. Reject malformed fields, duplicate records, invalid references, nonpositive totals, more active loans than copies and inconsistent dates. Allow counts above the member's current limit and original periods different from the current type.
+- R21: Save normalized member IDs and types, ISBNs and total copies, and each loan's member ID, ISBN, borrow date, due date and original period. Reject malformed fields, duplicate records, invalid references, nonpositive totals, more active loans than copies and inconsistent dates. Reject active loan counts above the member's current limit. Allow original periods different from the current type, because updates preserve the terms fixed at borrowing.
 - R22: In file mode, automatically save each effective registration, type change, copy addition, borrow and return. Publish candidate memory state only after saving succeeds. Queries, loading and same-type updates do not write. Report a successful return's fine only after saving succeeds.
 - R23: Saving failure causes LibraryStorageException. Write a full candidate to a temporary file in the same directory, then publish it atomically. Never truncate the original first or use a non-atomic fallback. Unsupported atomic publication fails without changing the live state or original file. This guarantee assumes one writer and a supported local filesystem; hardware loss and crash durability are outside scope.
 - R24: Save business data, not executable policy objects. create(path) and load(path) select the default policy. Explicit overloads accept a custom policy, which the caller must supply again on reload. Policy selection never changes stored due dates.
@@ -62,7 +62,7 @@ Each row is independent unless it describes a sequence. U means Undergraduate, P
 | AC11 | R5, R22 | Update P S1 to P S1 with 1 loan in file mode | Count, dates and file bytes unchanged; no write or error |
 | AC12 | R6 | U S1 holds 4 distinct books; borrow available B5, then B6 | B5 succeeds, count 5; B6 throws BorrowLimitException, count still 5 |
 | AC13 | R6 | P S2 holds 9 distinct books; borrow available B10, then B11 | B10 succeeds, count 10; B11 throws BorrowLimitException |
-| AC14 | R5, R6 | P S1 has 8 loans; update to U; try a new ISBN at counts 8, 5 and 4 after intervening returns | Update succeeds; attempts at 8 and 5 fail with BorrowLimitException; attempt at 4 succeeds, count 5 |
+| AC14 | R5, R6, R17 | P S1 has 6 or 8 loans; attempt update to U; return loans until count 5 and retry; attempt new borrowing at counts 5 and 4 | First update throws BorrowLimitException with unchanged state; S1 remains P. At 5, update succeeds with old dates preserved; borrowing fails at 5 and succeeds at 4. Old loans borrowed 2026-03-01 cost 0 on 2026-03-29; new U loans cost 50 on day 15 |
 | AC15 | R7 | Add B1 with 2 copies; borrow 1; add B1 with 3 copies | Total 5, active 1, available 4 |
 | AC16 | R3, R7 | Add B1 with 1 copy; add B2 with 2147483647; add B2 with 1 more | First two succeed; last throws IllegalArgumentException; B2 total unchanged |
 | AC17 | R8 | B1 has 2 copies; S1 borrows B1 twice | Second call throws DuplicateLoanException; count 1 |
@@ -93,7 +93,7 @@ Each row is independent unless it describes a sequence. U means Undergraduate, P
 | AC42 | R20 | load nonexistent library.properties | LibraryStorageException identifying load and path; no file created |
 | AC43 | R20 | File version 99, or unreadable file | LibraryStorageException with useful cause; original file unchanged |
 | AC44 | R20, R21 | Duplicate S1; loan referencing absent S99; or 2 B1 loans with total 1 | Each entire load rejected with LibraryStorageException; no rewrite |
-| AC45 | R21 | P S1 has 8 loans; update to U, save and reload | Load succeeds; count 8; new borrowing throws BorrowLimitException |
+| AC45 | R20, R21 | Load snapshots containing U S1 with 6 loans or P S1 with 11 loans; separately reload a valid update from P to U at 5 loans | Over-limit snapshots throw LibraryStorageException without rewriting. Valid snapshot loads with count 5, blocks new borrowing, and retains old 28-day due dates |
 | AC46 | R21 | U borrows 2026-03-01, upgrades to P, reloads and returns 2026-03-16 | Stored due date 2026-03-15; fine 50 |
 | AC47 | R21 | Stored borrow date 2026-03-01, period 14, due date 2026-03-16 | Load rejected; expected due date is 2026-03-15 |
 | AC48 | R22 | Register, add 2 B1 copies, borrow 1, change type, return; reload after each successful mutation | Every completed mutation survives reload; final count 0 and available copies 2 |
@@ -115,7 +115,7 @@ Confirmed entries record decisions made during the discussion. Accepted after re
 | Duplicate member registration | Reject duplicate normalized ID | Avoid accidental replacement | R4 | Confirmed |
 | Type changes | Separate updateMember | Support status changes explicitly | R5 | Confirmed |
 | Existing loans after updates | Preserve original due dates | Do not change agreed loan terms retroactively | R5, R10 | Confirmed |
-| Downgrade above new limit | Allow update; constrain new borrowing | Keep identity accurate without cancelling loans | R6 | Confirmed |
+| Downgrade above new limit | Reject with BorrowLimitException; allow equality | Preserve the examination's at-all-times holding limit without cancelling loans | R5, R6 | Revised and confirmed on 2026-10-21 |
 | Unknown update ID | Reject; do not create | Separate registration and modification | R5 | Confirmed |
 | Same-type update | Succeed without changes | Repeated updates have no extra effect | R5, R22 | Confirmed |
 | Return without a loan | LoanNotFoundException; unchanged state | Detect wrong or repeated returns | R12, R17 | Confirmed |
