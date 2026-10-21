@@ -3,7 +3,7 @@
 ## Tools used
 
 - AI tool: Codex desktop chat.
-- Model: the exact model identifier was not verified in the chat.
+- Primary chat model: gpt-6-astra, verified from this chat's local turn metadata during final submission checks.
 - Current stage: specification and design approved by the student on 2026-10-21, including the technical decisions. Implementation was authorized after that review. Codex created spec commit 0c3676d before editing source. The baseline and initial 96-test implementation build passed. After the student revised the holding-limit rule, a clean build on Amazon Corretto 17.0.20.1 passed 100 tests with 0 failures, 0 errors and 0 skips. The student then confirmed the Chinese explanation of key test expectations and the latest decision record, and authorized the impl commit and entry into Part 2.
 
 ## Key requests

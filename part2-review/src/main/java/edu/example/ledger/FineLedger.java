@@ -25,7 +25,11 @@ public class FineLedger {
         if (cents <= 0 || cents > MAX_FINE) {
             throw new IllegalArgumentException("fine must be 1-100000 cents: " + cents);
         }
-        balances.merge(studentId, cents, Integer::sum);
+        int current = owed(studentId);
+        if (current > Integer.MAX_VALUE - cents) {
+            throw new IllegalArgumentException("accumulated fine exceeds int range");
+        }
+        balances.put(studentId, current + cents);
     }
 
     /** R2: pays a fine and returns the remaining amount owed. */
@@ -34,8 +38,10 @@ public class FineLedger {
             throw new IllegalArgumentException("payment must be positive: " + cents);
         }
         int owed = owed(studentId);
-        // If the payment exceeds the debt, the balance goes to zero
-        int remaining = Math.max(0, owed - cents);
+        if (cents > owed) {
+            throw new IllegalArgumentException("payment exceeds amount owed: " + cents);
+        }
+        int remaining = owed - cents;
         balances.put(studentId, remaining);
         return remaining;
     }
@@ -47,7 +53,7 @@ public class FineLedger {
 
     /** R4: blocks borrowing once the amount owed reaches the threshold. */
     public boolean isBlocked(String studentId) {
-        return owed(studentId) > BLOCK_THRESHOLD;
+        return owed(studentId) >= BLOCK_THRESHOLD;
     }
 
     /** R5: the debtor list, ordered by amount owed, largest first. */
@@ -59,8 +65,8 @@ public class FineLedger {
             }
         }
         ids.sort(Comparator.comparing((String id) -> balances.get(id))
-                .thenComparing(Comparator.naturalOrder())
-                .reversed());
+                .reversed()
+                .thenComparing(Comparator.naturalOrder()));
         return List.copyOf(ids);
     }
 }
